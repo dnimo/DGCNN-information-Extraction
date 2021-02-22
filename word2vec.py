@@ -42,5 +42,9 @@ def sent2vec(S):
     V = word2vec[V]
     return V
 
-# print(tokenize('今天天气真好！'))
-# print(sent2vec(tokenize('今天天气真好！')))
+total_data = json.load(open('data/train_data_me.json'))
+id2predicate, predicate2id = json.load(open('data/all_50_schemas_me.json'))
+id2predicate = {int(i):j for i,j in id2predicate.items()}
+id2char, char2id = json.load(open('data/all_chars_me.json'))
+num_classes = len(id2predicate)
+
