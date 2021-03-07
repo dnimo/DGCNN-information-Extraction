@@ -155,7 +155,6 @@ class data_generator:
 
 # dgcnn模型部分
 
-from __future__ import print_function
 from keras.layers import *
 from keras.models import Model
 import keras.backend as K
@@ -309,7 +308,7 @@ t = Add()([t1, t2, pv]) # 字向量、词向量、位置向量相加
 
 # 使用12层膨胀门残差卷积
 t = Dropout(0.25)(t)
-t = Lambda(lambda x: x[0] * x[1])(t, mask)
+t = Lambda(lambda x: x[0] * x[1])([t, mask])
 t = dilated_gated_conv1d(t, mask, 1)
 t = dilated_gated_conv1d(t, mask, 2)
 t = dilated_gated_conv1d(t, mask, 5)
@@ -326,15 +325,15 @@ t_dim = K.int_shape(t)[-1]
 
 # 全链接层
 pn1 = Dense(char_size, activation='relu')(t)
-pn1 = Dense(1, activation='sigmod')(pn1)
+pn1 = Dense(1, activation='sigmoid')(pn1)
 pn2 = Dense(char_size, activation='relu')(t)
-pn2 = Dense(1, activation='sigmod')(pn2)
+pn2 = Dense(1, activation='sigmoid')(pn2)
 
 h = Attention(8, 16)([t, t, t, mask])
 h = Concatenate()([t, h])
 h = Conv1D(char_size, 3, activation='relu', padding='same')(h)
-ps1 = Dense(1, activation='sigmod')(h)
-ps2 = Dense(1, activation='sigmod')(h)
+ps1 = Dense(1, activation='sigmoid')(h)
+ps2 = Dense(1, activation='sigmoid')(h)
 ps1 = Lambda(lambda x: x[0] * x[1])([ps1, pn1])
 ps2 = Lambda(lambda x: x[0] * x[1])([ps2, pn2])
 
@@ -342,12 +341,12 @@ subject_model = Model([t1_in, t2_in], [ps1, ps2])
 
 t_max = Lambda(seq_maxpool)([t, mask])
 pc = Dense(char_size, activation='relu')(t_max)
-pc = Dense(num_classes, activation='sigmod')(pc)
+pc = Dense(num_classes, activation='sigmoid')(pc)
 
 def get_k_inter(x, n=6):
     seq, k1, k2 = x
     k_inter = [K.round(k1 * a + k2 * (1 - a)) for a in np.arange(n) / (n -1.)]
-    k_inter = [seq_gather(seq, k) for k in k_inter]
+    k_inter = [seq_gather([seq, k]) for k in k_inter]
     k_inter = [K.expand_dims(k, 1) for k in k_inter]
     k_inter = K.concatenate(k_inter, 1)
     return k_inter
@@ -359,12 +358,12 @@ k2v = position_embedding(Lambda(position_id)([t, k2]))
 kv = Concatenate()([k1v, k2v])
 k =Lambda(lambda x: K.expand_dims(x[0], 1) + x[1])([k, kv])
 
-h = Attention(8, 16)(t, t, t, mask)
+h = Attention(8, 16)([t, t, t, mask])
 h = Concatenate()([t, h, k])
 h = Conv1D(char_size, 3, activation='relu', padding='same')(h)
-po = Dense(1, activation='sigmod')(h)
-po1 = Dense(num_classes, activation='sigmod')(h)
-po2 = Dense(num_classes, activation='sigmod')(h)
+po = Dense(1, activation='sigmoid')(h)
+po1 = Dense(num_classes, activation='sigmoid')(h)
+po2 = Dense(num_classes, activation='sigmoid')(h)
 po1 = Lambda(lambda x: x[0] * x[2] * x[3])([po, po1, pc, pn1])
 po2 = Lambda(lambda x: x[0] * x[1] * x[2] * x[3])([po, po2, pc, pn2])
 
