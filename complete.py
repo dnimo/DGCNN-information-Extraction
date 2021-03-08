@@ -2,11 +2,9 @@ from __future__ import print_function
 import json
 import numpy as np
 from random import choice
-from tqdm import tqdm
 import pyhanlp
 from gensim.models import KeyedVectors
-import re,os, codecs
-import keras
+import os
 
 mode = 0
 char_size = 128
@@ -300,8 +298,6 @@ pid = Lambda(position_id)(t1)
 position_embedding = Embedding(maxlen, char_size, embeddings_initializer='zeros')
 pv = position_embedding(pid)
 
-# 暂时定义一个char2id
-char2id=[]
 t1 = Embedding(len(char2id)+2, char_size)(t1) # 0:padding, 1:unk
 t2 = Dense(char_size, use_bias=False)(t2) # 词向量转换为同样维度
 t = Add()([t1, t2, pv]) # 字向量、词向量、位置向量相加
@@ -402,17 +398,18 @@ class ExponentialMovingAverage:
         self.momentum = momentum
         self.model = model
         self.ema_weights = [K.zeros(K.shape(w)) for w in model.weights]
+    def initialize(self):
+        self.old_weights = K.batch_get_value(self.model.weights)
+        K.batch_set_value(list(zip(self.ema_weights, self.old_weights)))
     def inject(self):
         """
         添加更新算子到model.metrics_updates
         :return:
         """
         self.initialize()
-        for w1, w2 in zip(self.ema_weights, self.model.weights):
+        for w1, w2 in list(zip(self.ema_weights, self.model.weights)):
             op = K.moving_average_update(w1, w2, self.momentum)
             self.model.metrics_updates.append(op)
-    def initialize(self):
-        self.old_weights = K.batch_set_value(zip(self.ema_weights, self.old_weights))
     def apply_ema_weights(self):
         """
         备份原模型权重，然后平均权重应用到模型上去
@@ -420,9 +417,9 @@ class ExponentialMovingAverage:
         """
         self.old_weights = K.batch_get_value(self.model.weights)
         ema_weights = K.batch_get_value(self.ema_weights)
-        K.batch_set_value(zip(self.model.weights, ema_weights))
+        K.batch_set_value(list(zip(self.model.weights, ema_weights)))
     def reset_old_weights(self):
-        K.batch_set_value(zip(self.model.weights, self.old_weights))
+        K.batch_set_value(list(zip(self.model.weights, self.old_weights)))
 
 EMAer = ExponentialMovingAverage(train_model)
 EMAer.inject()
