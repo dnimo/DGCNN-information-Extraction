@@ -129,7 +129,7 @@ class data_generator:
                     k1, k2 = np.array(items.keys()).T
                     k1 = choice(k1)
                     k2 = choice(k2[k2 >= k1])
-                    o1, o2 = np.zeros((len(text), num_classes)), np.zeros((len(text)), num_classes)
+                    o1, o2 = np.zeros((len(text), num_classes)), np.zeros((len(text), num_classes))
                     for j in items.get((k1, k2), []):
                         o1[j[0]][j[2]] = 1
                         o2[j[1]-1][j[2]] = 1
@@ -260,16 +260,17 @@ class Attention(Layer):
         a = K.batch_dot(qw, kw, [3,3])/self.size_per_head**0.5
         a = K.permute_dimensions(a, (0, 3, 2, 1))
         a = self.mask(a, v_mask, 'add')
-        a = K.permute_dimensions(a, (0, 2, 1, 3))
+        a = K.permute_dimensions(a, (0, 3, 2, 1))
         a = K.softmax(a)
         # 完成输出
-        o = K.batch_dot(a, vw, [3,2])
+        o = K.batch_dot(a, vw, [3, 2])
         o = K.permute_dimensions(o, (0, 2, 1, 3))
         o = K.reshape(o, (-1, K.shape(o)[1], self.out_dim))
         o = self.mask(o, q_mask, 'mul')
         return o
     def compute_output_shape(self, input_shape):
         return (input_shape[0][0], input_shape[0][1], self.out_dim)
+
 
 t1_in = Input(shape=(None,))
 t2_in = Input(shape=(None, word_size))
@@ -360,7 +361,7 @@ h = Conv1D(char_size, 3, activation='relu', padding='same')(h)
 po = Dense(1, activation='sigmoid')(h)
 po1 = Dense(num_classes, activation='sigmoid')(h)
 po2 = Dense(num_classes, activation='sigmoid')(h)
-po1 = Lambda(lambda x: x[0] * x[2] * x[3])([po, po1, pc, pn1])
+po1 = Lambda(lambda x: x[0] * x[1] * x[2] * x[3])([po, po1, pc, pn1])
 po2 = Lambda(lambda x: x[0] * x[1] * x[2] * x[3])([po, po2, pc, pn2])
 
 # 输入text和subject，预测object及其关系
