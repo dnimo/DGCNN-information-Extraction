@@ -144,7 +144,7 @@ class data_generator:
                         T2 = sent2vec(T2)
                         S1 = seq_padding(S1)
                         S2 = seq_padding(S2)
-                        O1 = seq_padding(O1, np.zeros(num_classes))
+                        O1 = seq_padding(O1,  np.zeros(num_classes))
                         O2 = seq_padding(O2, np.zeros(num_classes))
                         K1, K2 = np.array(K1), np.array(K2)
                         yield [T1, T2, S1, S2, K1, K2, O1, O2], None
@@ -425,7 +425,7 @@ class ExponentialMovingAverage:
 EMAer = ExponentialMovingAverage(train_model)
 EMAer.inject()
 
-def Evaluate(Callback):
+def Evaluate():
     def __init__(self):
         self.F1 = []
         self.best = 0.
@@ -459,7 +459,7 @@ def Evaluate(Callback):
             K.batch_set_value(zip(self.model.optimizer.weights, opt_weights))
 
 train_D = data_generator(train_data)
-evaluator = Evaluate()
+evaluator = Evaluate(Callback)
 
 if __name__ == '__main__':
     train_model.fit_generator(
