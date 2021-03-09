@@ -83,7 +83,7 @@ def random_generate(d, spo_list_key):
         spi = d[spo_list_key][k]
         k = np.random.randint(len(predicates[spi[1]]))
         spo = predicates[spi[1]][k]
-        F = lambda s:s.replace(spi[0], spo[0]).replace(spi[2], spo[2])
+        F = lambda s: s.replace(spi[0], spo[0]).replace(spi[2], spo[2])
         text = F(d['text'])
         spo_list = [(F(sp[0]), sp[1], F(sp[2])) for sp in d[spo_list_key]]
         return {'text': text, spo_list_key: spo_list}
@@ -111,13 +111,13 @@ class data_generator:
                 items = {}
                 for sp in d[spo_list_key]:
                     subjectid = text.find(sp[0])
-                    object = text.find(sp[2])
-                    if subjectid != -1 and object != -1:
+                    objectid = text.find(sp[2])
+                    if subjectid != -1 and objectid != -1:
                         key = (subjectid, subjectid+len(sp[0]))
                         if key not in items:
                             items[key] = []
                         items[key].append(
-                            (object, object+len(sp[2]), predicate2id[sp[1]])
+                            (objectid, objectid+len(sp[2]), predicate2id[sp[1]])
                         )
                 if items:
                     T1.append([char2id.get(c, 1) for c in text])
@@ -150,15 +150,14 @@ class data_generator:
                         yield [T1, T2, S1, S2, K1, K2, O1, O2], None
                         T1, T2, S1, S2, K1, K2, O1, O2, = [], [], [], [], [], [], [], []
 
-
 # dgcnn模型部分
-
 from keras.layers import *
 from keras.models import Model
 import keras.backend as K
 from keras.callbacks import Callback
 from keras.optimizers import Adam
 from word2vec import word_size, char_size, maxlen
+import tqdm
 
 
 def seq_gather(x):
@@ -196,7 +195,7 @@ def dilated_gated_conv1d(seq, mask, dilation_rate=1):
         g, h = h[:, :, :dim], h[:, :, dim:]
         g = K.in_train_phase(K.dropout(g, dropout_rate), g)
         g = K.sigmoid(g)
-        return g*s+(1-g)*h
+        return g * s + (1 - g) * h
     seq = Lambda(_gate)([seq, h])
     seq = Lambda(lambda x: x[0] * x[1])([seq, mask])
     return seq
@@ -237,9 +236,9 @@ class Attention(Layer):
             else:
                 return x-(1-mask)*1e10
 
-    def call(self, inputs, **kwargs):
+    def call(self, inputs):
         q, k, v = inputs[:3]
-        v_mask, q_mask = None,None
+        v_mask, q_mask = None, None
         if len(inputs) > 3:
             v_mask = inputs[3]
             if len(inputs) > 4:
@@ -251,7 +250,7 @@ class Attention(Layer):
         # 形状变换
         qw = K.reshape(qw, (-1,K.shape(qw)[1],self.nb_head,self.size_per_head))
         kw = K.reshape(kw, (-1,K.shape(kw)[1],self.nb_head,self.size_per_head))
-        vw = K.reshape(vw, (-1,K.shape(kw)[1],self.nb_head,self.size_per_head))
+        vw = K.reshape(vw, (-1,K.shape(vw)[1],self.nb_head,self.size_per_head))
         # 维度置换
         qw = K.permute_dimensions(qw, (0,2,1,3))
         kw = K.permute_dimensions(kw, (0,2,1,3))
@@ -281,7 +280,7 @@ k2_in = Input(shape=(1,))
 o1_in = Input(shape=(None, num_classes))
 o2_in = Input(shape=(None, num_classes))
 
-t1, t2, s1, s2, k1, k2, o1, o2, = t1_in, t2_in, s1_in, s2_in, k1_in, k2_in, o1_in, o2_in
+t1, t2, s1, s2, k1, k2, o1, o2 = t1_in, t2_in, s1_in, s2_in, k1_in, k2_in, o1_in, o2_in
 mask = Lambda(lambda x: K.cast(K.greater(K.expand_dims(x, 2), 0), 'float32'))(t1)
 
 def position_id(x):
@@ -342,7 +341,7 @@ pc = Dense(num_classes, activation='sigmoid')(pc)
 
 def get_k_inter(x, n=6):
     seq, k1, k2 = x
-    k_inter = [K.round(k1 * a + k2 * (1 - a)) for a in np.arange(n) / (n -1.)]
+    k_inter = [K.round(k1 * a + k2 * (1 - a)) for a in np.arange(n) / (n - 1.)]
     k_inter = [seq_gather([seq, k]) for k in k_inter]
     k_inter = [K.expand_dims(k, 1) for k in k_inter]
     k_inter = K.concatenate(k_inter, 1)
@@ -353,7 +352,7 @@ k = Bidirectional(CuDNNGRU(t_dim))(k)
 k1v = position_embedding(Lambda(position_id)([t, k1]))
 k2v = position_embedding(Lambda(position_id)([t, k2]))
 kv = Concatenate()([k1v, k2v])
-k =Lambda(lambda x: K.expand_dims(x[0], 1) + x[1])([k, kv])
+k = Lambda(lambda x: K.expand_dims(x[0], 1) + x[1])([k, kv])
 
 h = Attention(8, 16)([t, t, t, mask])
 h = Concatenate()([t, h, k])
@@ -390,42 +389,96 @@ train_model.add_loss(loss)
 train_model.compile(optimizer=Adam(1e-3))
 train_model.summary()
 
-class ExponentialMovingAverage:
-    """
-    对模型权重进行指数滑动平均，在model.compile之后、第一次训练之前使用；
-    先初始化对象，然后执行inject方法
-    """
-    def __init__(self, model, momentum = 0.9999):
-        self.momentum = momentum
-        self.model = model
-        self.ema_weights = [K.zeros(K.shape(w)) for w in model.weights]
-    def initialize(self):
-        self.old_weights = K.batch_get_value(self.model.weights)
-        K.batch_set_value(list(zip(self.ema_weights, self.old_weights)))
-    def inject(self):
-        """
-        添加更新算子到model.metrics_updates
-        :return:
-        """
-        self.initialize()
-        for w1, w2 in list(zip(self.ema_weights, self.model.weights)):
-            op = K.moving_average_update(w1, w2, self.momentum)
-            self.model.metrics_updates.append(op)
-    def apply_ema_weights(self):
-        """
-        备份原模型权重，然后平均权重应用到模型上去
-        :return:
-        """
-        self.old_weights = K.batch_get_value(self.model.weights)
-        ema_weights = K.batch_get_value(self.ema_weights)
-        K.batch_set_value(list(zip(self.model.weights, ema_weights)))
-    def reset_old_weights(self):
-        K.batch_set_value(list(zip(self.model.weights, self.old_weights)))
 
-EMAer = ExponentialMovingAverage(train_model)
-EMAer.inject()
+# class ExponentialMovingAverage:
+#     """
+#     对模型权重进行指数滑动平均，在model.compile之后、第一次训练之前使用；
+#     先初始化对象，然后执行inject方法
+#     """
+#     def __init__(self, model, momentum = 0.9999):
+#         self.momentum = momentum
+#         self.model = model
+#         self.ema_weights = [K.zeros(K.shape(w)) for w in model.weights]
+#     def initialize(self):
+#         self.old_weights = K.batch_get_value(self.model.weights)
+#         K.batch_set_value(list(zip(self.ema_weights, self.old_weights)))
+#     def inject(self):
+#         """
+#         添加更新算子到model.metrics_updates
+#         :return:
+#         """
+#         self.initialize()
+#         for w1, w2 in list(zip(self.ema_weights, self.model.weights)):
+#             op = K.moving_average_update(w1, w2, self.momentum)
+#             self.model.metrics_updates.append(op)
+#     def apply_ema_weights(self):
+#         """
+#         备份原模型权重，然后平均权重应用到模型上去
+#         :return:
+#         """
+#         self.old_weights = K.batch_get_value(self.model.weights)
+#         ema_weights = K.batch_get_value(self.ema_weights)
+#         K.batch_set_value(list(zip(self.model.weights, ema_weights)))
+#     def reset_old_weights(self):
+#         K.batch_set_value(list(zip(self.model.weights, self.old_weights)))
+#
 
-def Evaluate():
+# EMAer = ExponentialMovingAverage(train_model)
+# EMAer.inject()
+
+
+def extract_items(text_in):
+    text_words = tokenize(text_in.lower())
+    text_in = ''.join(text_words)
+    R = []
+    _t1 = [char2id.get(c, 1) for c in text_in]
+    _t1 = np.array([_t1])
+    _t2 = sent2vec([text_words])
+    _k1, _k2 = subject_model.predict([_t1, _t2])
+    _k1, _k2 = _k1[0, :, 0], _k2[0, :, 0]
+    _k1, _k2 = np.where(_k1 > 0.5)[0], np.where(_k2 > 0.4)[0]
+    _subjects = []
+    for i in _k1:
+        j = _k2[_k2 >= i]
+        if len(j) > 0:
+            j = j[0]
+            _subject = text_in[i: j+1]
+            _subjects.append((_subject, i, j))
+    if _subjects:
+        _t1 = np.repeat(_t1, len(_subjects), 0)
+        _t2 = np.repeat(_t2, len(_subjects), 0)
+        _k1, _k2 = np.array([_s[1:] for _s in _subjects]).T.reshape((2, -1, 1))
+        _o1, _o2 = object_model.predict([_t1, _t2, _k1, _k2])
+        for i,_subject in enumerate(_subjects):
+            _oo1, _oo2 = np.where(_o1[i] > 0.5), np.where(_o2[i] > 0.4)
+            for _ooo1, _c1 in zip(*_oo1):
+                for _ooo2, _c2 in zip(*_oo2):
+                    if _ooo1 <= _ooo2 and _c1 == _c2:
+                        _object = text_in[_ooo1: _ooo2+1]
+                        _predicate = id2predicate[_c1]
+                        R.append((_subject[0], _predicate, _object))
+                        break
+        zhuanji, gequ = [], []
+        for s, p, o in R[:]:
+            if p == u'妻子':
+                R.append((o, u'丈夫', s))
+            elif p == u'丈夫':
+                R.append((o, u'妻子', s))
+            if p == u'所属专辑':
+                zhuanji.append(o)
+                gequ.append(s)
+        spo_list = set()
+        for s, p, o in R:
+            if p in [u'歌手', u'作词', u'作曲']:
+                if s in zhuanji and s not in gequ:
+                    continue
+            spo_list.add((s, p, o))
+        return list(spo_list)
+    else:
+        return []
+
+
+class Evaluate(Callback):
     def __init__(self):
         self.F1 = []
         self.best = 0.
@@ -433,33 +486,55 @@ def Evaluate():
         self.stage = 0
     def on_batch_begin(self, batch, logs=None):
         if self.passed < self.params['steps']:
-            lr = (self.passed+1.)/self.params['steps'] * 1e-3
+            lr = (self.passed + 1.) / self.params['steps'] * 1e-3
             K.set_value(self.model.optimizer.lr, lr)
             self.passed += 1
     def on_epoch_end(self, epoch, logs=None):
-        EMAer.apply_ema_weights()
+        # EMAer.apply_ema_weights()
         f1, precision, recall = self.evaluate()
         self.F1.append(f1)
         if f1 > self.best:
             self.best = f1
             train_model.save_weights('best_model.weights')
-        print('f1:%.4f, precision: %.4f, recall: %.4f, best f1: %.4f\n' % (f1, precision, recall, self.best))
-        EMAer.reset_old_weights()
+        print('f1: %.4f, precision: %.4f, recall: %.4f, best f1: %.4f\n' % (f1, precision, recall, self.best))
+        # EMAer.reset_old_weights()
         if epoch + 1 == 50 or (
-                self.stage == 0 and epoch > 10 and
-                (f1 < 0.5 or np.argmax(self.F1) < len(self.F1) - 8)
+            self.stage == 0 and epoch > 10 and
+            (f1 < 0.5 or np.argmax(self.F1) < len(self.F1) - 8)
         ):
             self.stage = 1
             train_model.load_weights('best_model.weights')
-            EMAer.initialize()
+            # EMAer.initialize()
             K.set_value(self.model.optimizer.lr, 1e-4)
             K.set_value(self.model.optimizer.iterations, 0)
             opt_weights = K.batch_get_value(self.model.optimizer.weights)
             opt_weights = [w * 0. for w in opt_weights]
             K.batch_set_value(zip(self.model.optimizer.weights, opt_weights))
+    # def evaluate(self):
+    #     orders = ['subject', 'predicate', 'object']
+    #     A, B, C = 1e-10, 1e-10, 1e-10
+    #     F = open('dev_pred.json', 'w')
+    #     for d in tqdm(iter(dev_data)):
+    #         R = set(extract_items(d['text']))
+    #         T = set(d['spo_list'])
+    #         A += len(R & T)
+    #         B += len(R)
+    #         C += len(T)
+    #         s = json.dumps({
+    #             'text':d['text'],
+    #             'spo_list':[
+    #             dict(list(zip(orders, spo))) for spo in T
+    #         ],
+    #         'lack': [
+    #             dict(list(zip(orders, spo))) for spo in T - R
+    #           ]
+    #         }, ensure_ascii=False, indent=4)
+    #         F.write(s.encode('utf-8')+'\n')
+    #         F.close()
+    #         return 2*A/(B+C), A / B, A / C
 
 train_D = data_generator(train_data)
-evaluator = Evaluate(Callback)
+evaluator = Evaluate()
 
 if __name__ == '__main__':
     train_model.fit_generator(
