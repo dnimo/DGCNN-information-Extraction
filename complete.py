@@ -1,8 +1,10 @@
+# -*- coding: utf-8 -*-
+
 from __future__ import print_function
 import json
 import numpy as np
 from random import choice
-import pyhanlp
+import jieba
 from gensim.models import KeyedVectors
 import os
 
@@ -10,23 +12,25 @@ mode = 0
 char_size = 128
 maxlen = 512
 
+
 word2vec = KeyedVectors.load_word2vec_format('data/financial.word.txt')
 
-id2word = {i+1:j for i,j in enumerate(word2vec.wv.index2word)}
-word2id = {j:i for i,j in id2word.items()}
+id2word = {i+1: j for i, j in enumerate(word2vec.wv.index2word)}
+word2id = {j: i for i, j in id2word.items()}
 word2vec = word2vec.wv.vectors
 word_size = word2vec.shape[1]
-word2vec = np.concatenate([np.zeros((1,word_size)),word2vec])
+word2vec = np.concatenate([np.zeros((1, word_size)), word2vec])
+
 
 def tokenize(s):
-    return [i.word for i in pyhanlp.HanLP.segment(s)]
+    return [i for i in jieba.lcut(s)]
 
 
-def seq_padding(X,padding=0):
+def seq_padding(X, padding=0):
     L = [len(x) for x in X]
     ML = max(L)
     return np.array([
-        np.concatenate([x,[padding]*(ML-len(x))]) if len(x) < ML else x for x in X
+        np.concatenate([x, [padding]*(ML-len(x))]) if len(x) < ML else x for x in X
         ])
 
 def sent2vec(S):
@@ -35,33 +39,30 @@ def sent2vec(S):
         V.append([])
         for w in s:
             for _ in w:
-                V[-1].append(word2id.get(w,0))
+                V[-1].append(word2id.get(w, 0))
     V = seq_padding(V)
     V = word2vec[V]
     return V
 
-total_data = json.load(open('data/train_data_me.json'))
-id2predicate, predicate2id = json.load(open('data/all_50_schemas_me.json'))
+
+total_data = json.load(open('data/train_data_all.json'))
+id2predicate, predicate2id = json.load(open('data/all_schemas_me_chars.json'))
 id2predicate = {int(i):j for i,j in id2predicate.items()}
 id2char, char2id = json.load(open('data/all_chars_me.json'))
 num_classes = len(id2predicate)
 
 # 随机打乱数据集
 if not os.path.exists('data/random_order_vote.json'):
-    random_order = list(range(len(total_data)))
-    with open('data/random_order_vote.json', 'w', encoding='utf-8') as f:
+    random_order = range(len(total_data))
+    np.random.shuffle(random_order)
+    with open('data/random_order_vote.json', 'w') as f:
         json.dump(random_order, f, indent=4, ensure_ascii=False)
-    # json.dump(
-    #     random_order,
-    #     open('data/random_order_vote.json', 'w', encoding='utf-8'),
-    #     indent = 4
-    # )
 else:
     random_order = json.load(open('data/random_order_vote.json'))
 
 # 创建训练集以及测试集
-train_data = [total_data[j] for i,j in enumerate(random_order) if i % 8 != mode]
-# dev_data = [total_data[j] for i,j in enumerate(random_order) if i % 8 == mode]
+train_data = [total_data[j] for i, j in enumerate(random_order) if i % 8 != mode]
+dev_data = [total_data[j] for i, j in enumerate(random_order) if i % 8 == mode]
 
 predicates = {}
 # predicates字典格式，{predicate:[(subject, predicate, object)]}
@@ -99,9 +100,9 @@ class data_generator:
         return self.steps
     def __iter__(self):
         while True:
-            idxs = list(range(len(self.data)))
+            idxs = range(len(self.data))
             np.random.shuffle(idxs)
-            T1, T2, S1, S2, K1, K2, O1, O2 = [], [], [], [], [], [], [], []
+            T1, T2, S1, S2, K1, K2, O1, O2, = [], [], [], [], [], [], [], []
             for i in idxs:
                 spo_list_key = 'spo_list'
                 d = random_generate(self.data[i], spo_list_key)
@@ -116,9 +117,9 @@ class data_generator:
                         key = (subjectid, subjectid+len(sp[0]))
                         if key not in items:
                             items[key] = []
-                        items[key].append(
-                            (objectid, objectid+len(sp[2]), predicate2id[sp[1]])
-                        )
+                        items[key].append((objectid,
+                                           objectid+len(sp[2]),
+                                           predicate2id[sp[1]]))
                 if items:
                     T1.append([char2id.get(c, 1) for c in text])
                     T2.append(text_words)
@@ -144,7 +145,7 @@ class data_generator:
                         T2 = sent2vec(T2)
                         S1 = seq_padding(S1)
                         S2 = seq_padding(S2)
-                        O1 = seq_padding(O1,  np.zeros(num_classes))
+                        O1 = seq_padding(O1, np.zeros(num_classes))
                         O2 = seq_padding(O2, np.zeros(num_classes))
                         K1, K2 = np.array(K1), np.array(K2)
                         yield [T1, T2, S1, S2, K1, K2, O1, O2], None
@@ -156,8 +157,6 @@ from keras.models import Model
 import keras.backend as K
 from keras.callbacks import Callback
 from keras.optimizers import Adam
-from word2vec import word_size, char_size, maxlen
-import tqdm
 
 
 def seq_gather(x):
@@ -177,7 +176,7 @@ def seq_maxpool(x):
     然后再做maxpooling
     """
     seq, mask = x
-    seq -= (1 - mask)*1e10
+    seq -= (1 - mask) * 1e10
     return K.max(seq, 1, keepdims=True)
 
 def dilated_gated_conv1d(seq, mask, dilation_rate=1):
@@ -210,32 +209,30 @@ class Attention(Layer):
         self.size_per_head = size_per_head
         self.out_dim = nb_head * size_per_head
         super(Attention, self).__init__(**kwargs)
-
     def build(self, input_shape):
         super(Attention, self).build(input_shape)
         q_in_dim = input_shape[0][-1]
         k_in_dim = input_shape[1][-1]
         v_in_dim = input_shape[2][-1]
-        self.q_kernel = self.add_weight(name='q_kernel', shape=(q_in_dim, self.out_dim),
-                                        initializer='glorot_normal'
-                                        )
-        self.k_kernel = self.add_weight(name='k_kernel', shape=(k_in_dim, self.out_dim),
-                                        initializer='glorot_normal'
-                                        )
-        self.v_kernel = self.add_weight(name='w_kernel', shape=(v_in_dim, self.out_dim),
-                                        initializer='glorot_normal'
-                                        )
+        self.q_kernel = self.add_weight(name='q_kernel',
+                                        shape=(q_in_dim, self.out_dim),
+                                        initializer='glorot_normal')
+        self.k_kernel = self.add_weight(name='k_kernel',
+                                        shape=(k_in_dim, self.out_dim),
+                                        initializer='glorot_normal')
+        self.v_kernel = self.add_weight(name='w_kernel',
+                                        shape=(v_in_dim, self.out_dim),
+                                        initializer='glorot_normal')
     def mask(self, x, mask, mode='mul'):
         if mask is None:
-           return x
+            return x
         else:
-            for _ in range(K.ndim(x)-K.ndim(mask)):
+            for _ in range(K.ndim(x) - K.ndim(mask)):
                 mask = K.expand_dims(mask, K.ndim(mask))
             if mode == 'mul':
-                return x*mask
+                return x * mask
             else:
-                return x-(1-mask)*1e10
-
+                return x - (1 - mask) * 1e10
     def call(self, inputs):
         q, k, v = inputs[:3]
         v_mask, q_mask = None, None
@@ -248,15 +245,15 @@ class Attention(Layer):
         kw = K.dot(k, self.k_kernel)
         vw = K.dot(v, self.v_kernel)
         # 形状变换
-        qw = K.reshape(qw, (-1,K.shape(qw)[1],self.nb_head,self.size_per_head))
-        kw = K.reshape(kw, (-1,K.shape(kw)[1],self.nb_head,self.size_per_head))
-        vw = K.reshape(vw, (-1,K.shape(vw)[1],self.nb_head,self.size_per_head))
+        qw = K.reshape(qw, (-1, K.shape(qw)[1], self.nb_head, self.size_per_head))
+        kw = K.reshape(kw, (-1, K.shape(kw)[1], self.nb_head, self.size_per_head))
+        vw = K.reshape(vw, (-1, K.shape(vw)[1], self.nb_head, self.size_per_head))
         # 维度置换
-        qw = K.permute_dimensions(qw, (0,2,1,3))
-        kw = K.permute_dimensions(kw, (0,2,1,3))
-        vw = K.permute_dimensions(vw, (0,2,1,3))
+        qw = K.permute_dimensions(qw, (0, 2, 1, 3))
+        kw = K.permute_dimensions(kw, (0, 2, 1, 3))
+        vw = K.permute_dimensions(vw, (0, 2, 1, 3))
         # Attention
-        a = K.batch_dot(qw, kw, [3,3])/self.size_per_head**0.5
+        a = K.batch_dot(qw, kw, [3, 3]) / self.size_per_head**0.5
         a = K.permute_dimensions(a, (0, 3, 2, 1))
         a = self.mask(a, v_mask, 'add')
         a = K.permute_dimensions(a, (0, 3, 2, 1))
@@ -292,16 +289,14 @@ def position_id(x):
     pid = K.expand_dims(pid, 0)
     pid = K.tile(pid, [K.shape(x)[0], 1])
     return K.abs(pid - K.cast(r, 'int32'))
-
 # 生成位置向量
 pid = Lambda(position_id)(t1)
 position_embedding = Embedding(maxlen, char_size, embeddings_initializer='zeros')
 pv = position_embedding(pid)
 
-t1 = Embedding(len(char2id)+2, char_size)(t1) # 0:padding, 1:unk
+t1 = Embedding(len(char2id)+2, char_size)(t1) # 0: padding, 1: unk
 t2 = Dense(char_size, use_bias=False)(t2) # 词向量转换为同样维度
 t = Add()([t1, t2, pv]) # 字向量、词向量、位置向量相加
-
 # 使用12层膨胀门残差卷积
 t = Dropout(0.25)(t)
 t = Lambda(lambda x: x[0] * x[1])([t, mask])
@@ -318,7 +313,6 @@ t = dilated_gated_conv1d(t, mask, 1)
 t = dilated_gated_conv1d(t, mask, 1)
 t = dilated_gated_conv1d(t, mask, 1)
 t_dim = K.int_shape(t)[-1]
-
 # 全链接层
 pn1 = Dense(char_size, activation='relu')(t)
 pn1 = Dense(1, activation='sigmoid')(pn1)
@@ -348,7 +342,7 @@ def get_k_inter(x, n=6):
     return k_inter
 
 k = Lambda(get_k_inter, output_shape=(6, t_dim))([t, k1, k2])
-k = Bidirectional(CuDNNGRU(t_dim))(k)
+k = Bidirectional(GRU(t_dim))(k)
 k1v = position_embedding(Lambda(position_id)([t, k1]))
 k2v = position_embedding(Lambda(position_id)([t, k2]))
 kv = Concatenate()([k1v, k2v])
@@ -362,7 +356,6 @@ po1 = Dense(num_classes, activation='sigmoid')(h)
 po2 = Dense(num_classes, activation='sigmoid')(h)
 po1 = Lambda(lambda x: x[0] * x[1] * x[2] * x[3])([po, po1, pc, pn1])
 po2 = Lambda(lambda x: x[0] * x[1] * x[2] * x[3])([po, po2, pc, pn2])
-
 # 输入text和subject，预测object及其关系
 object_model = Model([t1_in, t2_in, k1_in, k2_in], [po1, po2])
 
@@ -390,41 +383,41 @@ train_model.compile(optimizer=Adam(1e-3))
 train_model.summary()
 
 
-# class ExponentialMovingAverage:
-#     """
-#     对模型权重进行指数滑动平均，在model.compile之后、第一次训练之前使用；
-#     先初始化对象，然后执行inject方法
-#     """
-#     def __init__(self, model, momentum = 0.9999):
-#         self.momentum = momentum
-#         self.model = model
-#         self.ema_weights = [K.zeros(K.shape(w)) for w in model.weights]
-#     def initialize(self):
-#         self.old_weights = K.batch_get_value(self.model.weights)
-#         K.batch_set_value(list(zip(self.ema_weights, self.old_weights)))
-#     def inject(self):
-#         """
-#         添加更新算子到model.metrics_updates
-#         :return:
-#         """
-#         self.initialize()
-#         for w1, w2 in list(zip(self.ema_weights, self.model.weights)):
-#             op = K.moving_average_update(w1, w2, self.momentum)
-#             self.model.metrics_updates.append(op)
-#     def apply_ema_weights(self):
-#         """
-#         备份原模型权重，然后平均权重应用到模型上去
-#         :return:
-#         """
-#         self.old_weights = K.batch_get_value(self.model.weights)
-#         ema_weights = K.batch_get_value(self.ema_weights)
-#         K.batch_set_value(list(zip(self.model.weights, ema_weights)))
-#     def reset_old_weights(self):
-#         K.batch_set_value(list(zip(self.model.weights, self.old_weights)))
-#
+class ExponentialMovingAverage:
+    """
+    对模型权重进行指数滑动平均，在model.compile之后、第一次训练之前使用；
+    先初始化对象，然后执行inject方法
+    """
+    def __init__(self, model, momentum=0.9999):
+        self.momentum = momentum
+        self.model = model
+        self.ema_weights = [K.zeros(K.shape(w)) for w in model.weights]
+    def inject(self):
+        """
+        添加更新算子到model.metrics_updates
+        :return:
+        """
+        self.initialize()
+        for w1, w2 in zip(self.ema_weights, self.model.weights):
+            op = K.moving_average_update(w1, w2, self.momentum)
+            self.model.metrics_updates.append(op)
+    def initialize(self):
+        self.old_weights = K.batch_get_value(self.model.weights)
+        K.batch_set_value(zip(self.ema_weights, self.old_weights))
+    def apply_ema_weights(self):
+        """
+        备份原模型权重，然后平均权重应用到模型上去
+        :return:
+        """
+        self.old_weights = K.batch_get_value(self.model.weights)
+        ema_weights = K.batch_get_value(self.ema_weights)
+        K.batch_set_value(zip(self.model.weights, ema_weights))
+    def reset_old_weights(self):
+        K.batch_set_value(zip(self.model.weights, self.old_weights))
 
-# EMAer = ExponentialMovingAverage(train_model)
-# EMAer.inject()
+
+EMAer = ExponentialMovingAverage(train_model)
+EMAer.inject()
 
 
 def extract_items(text_in):
@@ -458,20 +451,8 @@ def extract_items(text_in):
                         _predicate = id2predicate[_c1]
                         R.append((_subject[0], _predicate, _object))
                         break
-        zhuanji, gequ = [], []
-        for s, p, o in R[:]:
-            if p == u'妻子':
-                R.append((o, u'丈夫', s))
-            elif p == u'丈夫':
-                R.append((o, u'妻子', s))
-            if p == u'所属专辑':
-                zhuanji.append(o)
-                gequ.append(s)
         spo_list = set()
         for s, p, o in R:
-            if p in [u'歌手', u'作词', u'作曲']:
-                if s in zhuanji and s not in gequ:
-                    continue
             spo_list.add((s, p, o))
         return list(spo_list)
     else:
@@ -490,48 +471,57 @@ class Evaluate(Callback):
             K.set_value(self.model.optimizer.lr, lr)
             self.passed += 1
     def on_epoch_end(self, epoch, logs=None):
-        # EMAer.apply_ema_weights()
+        EMAer.apply_ema_weights()
         f1, precision, recall = self.evaluate()
         self.F1.append(f1)
         if f1 > self.best:
             self.best = f1
             train_model.save_weights('best_model.weights')
         print('f1: %.4f, precision: %.4f, recall: %.4f, best f1: %.4f\n' % (f1, precision, recall, self.best))
-        # EMAer.reset_old_weights()
+        EMAer.reset_old_weights()
         if epoch + 1 == 50 or (
             self.stage == 0 and epoch > 10 and
             (f1 < 0.5 or np.argmax(self.F1) < len(self.F1) - 8)
         ):
             self.stage = 1
             train_model.load_weights('best_model.weights')
-            # EMAer.initialize()
+            EMAer.initialize()
             K.set_value(self.model.optimizer.lr, 1e-4)
             K.set_value(self.model.optimizer.iterations, 0)
             opt_weights = K.batch_get_value(self.model.optimizer.weights)
             opt_weights = [w * 0. for w in opt_weights]
             K.batch_set_value(zip(self.model.optimizer.weights, opt_weights))
-    # def evaluate(self):
-    #     orders = ['subject', 'predicate', 'object']
-    #     A, B, C = 1e-10, 1e-10, 1e-10
-    #     F = open('dev_pred.json', 'w')
-    #     for d in tqdm(iter(dev_data)):
-    #         R = set(extract_items(d['text']))
-    #         T = set(d['spo_list'])
-    #         A += len(R & T)
-    #         B += len(R)
-    #         C += len(T)
-    #         s = json.dumps({
-    #             'text':d['text'],
-    #             'spo_list':[
-    #             dict(list(zip(orders, spo))) for spo in T
-    #         ],
-    #         'lack': [
-    #             dict(list(zip(orders, spo))) for spo in T - R
-    #           ]
-    #         }, ensure_ascii=False, indent=4)
-    #         F.write(s.encode('utf-8')+'\n')
-    #         F.close()
-    #         return 2*A/(B+C), A / B, A / C
+    def evaluate(self):
+        orders = ['subject', 'predicate', 'object']
+        A, B, C = 1e-10, 1e-10, 1e-10
+        F = open('dev_pred.json', 'w')
+        for d in (dev_data):
+            R = set(extract_items(d['text']))
+            # 解决list的对象不可hash的问题
+            T = set()
+            for item in d['spo_list']:
+                T.add(tuple(item))
+            A += len(R & T)
+            B += len(R)
+            C += len(T)
+            s = json.dumps({
+                'text': d['text'],
+                'spo_list': [
+                    dict(zip(orders, spo)) for spo in T
+                ],
+                'spo_list_pred': [
+                    dict(zip(orders, spo)) for spo in R
+                ],
+                'new': [
+                    dict(zip(orders, spo)) for spo in R - T
+                ],
+                'lack': [
+                    dict(zip(orders, spo)) for spo in T - R
+                ]
+            }, ensure_ascii=False, indent=4)
+            F.write(s.encode('utf-8') + '\n')
+        F.close()
+        return 2 * A / (B + C), A / B, A / C
 
 train_D = data_generator(train_data)
 evaluator = Evaluate()
@@ -540,7 +530,7 @@ if __name__ == '__main__':
     train_model.fit_generator(
         train_D.__iter__(),
         steps_per_epoch=len(train_D),
-        epochs=10,
+        epochs=120,
         callbacks=[evaluator]
     )
 else:
