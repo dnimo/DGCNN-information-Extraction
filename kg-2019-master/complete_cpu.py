@@ -13,7 +13,7 @@ char_size = 128
 maxlen = 512
 
 
-word2vec = KeyedVectors.load_word2vec_format('data/financial.word.txt')
+word2vec = KeyedVectors.load_word2vec_format('/home/masanoyu/workspace/DGCNN/data/financial.word.txt')
 
 id2word = {i+1: j for i, j in enumerate(word2vec.wv.index2word)}
 word2id = {j: i for i, j in id2word.items()}
@@ -45,20 +45,20 @@ def sent2vec(S):
     return V
 
 
-total_data = json.load(open('data/train_data_all.json'))
-id2predicate, predicate2id = json.load(open('data/all_schemas_me_chars.json'))
+total_data = json.load(open('/home/masanoyu/workspace/DGCNN/kg-2019-master/train_data_me.json'))
+id2predicate, predicate2id = json.load(open('/home/masanoyu/workspace/DGCNN/kg-2019-master/all_50_schemas_me.json'))
 id2predicate = {int(i):j for i,j in id2predicate.items()}
-id2char, char2id = json.load(open('data/all_chars_me.json'))
+id2char, char2id = json.load(open('/home/masanoyu/workspace/DGCNN/kg-2019-master/all_chars_me.json'))
 num_classes = len(id2predicate)
 
 # 随机打乱数据集
-if not os.path.exists('data/random_order_vote.json'):
+if not os.path.exists('/home/masanoyu/workspace/DGCNN/kg-2019-master/random_order_vote.json'):
     random_order = range(len(total_data))
     np.random.shuffle(random_order)
-    with open('data/random_order_vote.json', 'w') as f:
+    with open('/home/masanoyu/workspace/DGCNN/kg-2019-master/random_order_vote.json', 'w') as f:
         json.dump(random_order, f, indent=4, ensure_ascii=False)
 else:
-    random_order = json.load(open('data/random_order_vote.json'))
+    random_order = json.load(open('/home/masanoyu/workspace/DGCNN/kg-2019-master/random_order_vote.json'))
 
 # 创建训练集以及测试集
 train_data = [total_data[j] for i, j in enumerate(random_order) if i % 8 != mode]
@@ -342,7 +342,7 @@ def get_k_inter(x, n=6):
     return k_inter
 
 k = Lambda(get_k_inter, output_shape=(6, t_dim))([t, k1, k2])
-k = Bidirectional(CuDNNGRU(t_dim))(k)
+k = Bidirectional(GRU(t_dim))(k)
 k1v = position_embedding(Lambda(position_id)([t, k1]))
 k2v = position_embedding(Lambda(position_id)([t, k2]))
 kv = Concatenate()([k1v, k2v])
@@ -461,6 +461,7 @@ def extract_items(text_in):
 
 class Evaluate(Callback):
     def __init__(self):
+        super(Evaluate, self).__init__()
         self.F1 = []
         self.best = 0.
         self.passed = 0
@@ -476,7 +477,7 @@ class Evaluate(Callback):
         self.F1.append(f1)
         if f1 > self.best:
             self.best = f1
-            train_model.save_weights('best_model.weights')
+            train_model.save_weights('kg_best_model.weights')
         print('f1: %.4f, precision: %.4f, recall: %.4f, best f1: %.4f\n' % (f1, precision, recall, self.best))
         EMAer.reset_old_weights()
         if epoch + 1 == 50 or (
@@ -494,7 +495,7 @@ class Evaluate(Callback):
     def evaluate(self):
         orders = ['subject', 'predicate', 'object']
         A, B, C = 1e-10, 1e-10, 1e-10
-        F = open('dev_pred.json', 'w')
+        F = open('../dev_pred.json', 'w')
         for d in (dev_data):
             R = set(extract_items(d['text']))
             # 解决list的对象不可hash的问题
@@ -530,7 +531,7 @@ if __name__ == '__main__':
     train_model.fit_generator(
         train_D.__iter__(),
         steps_per_epoch=len(train_D),
-        epochs=10,
+        epochs=100,
         callbacks=[evaluator]
     )
 else:
