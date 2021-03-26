@@ -495,7 +495,7 @@ class Evaluate(Callback):
     def evaluate(self):
         orders = ['subject', 'predicate', 'object']
         A, B, C = 1e-10, 1e-10, 1e-10
-        F = open('../dev_pred.json', 'w')
+        F = open('dev_pred.json', 'w')
         for d in (dev_data):
             R = set(extract_items(d['text']))
             # 解决list的对象不可hash的问题
